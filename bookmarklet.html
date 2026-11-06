@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Live Editor — edit on the page itself</title>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; margin: 0; background: #f4f4f5; color: #18181b; }
+  main { max-width: 640px; margin: 0 auto; padding: 32px 16px; }
+  .card { background: #fff; border: 1px solid #e4e4e7; border-radius: 12px; padding: 20px; margin-bottom: 14px; }
+  h1 { margin: 0 0 6px; font-size: 24px; }
+  p { line-height: 1.55; }
+  .bm { display: inline-block; background: #18181b; color: #fff; font-size: 18px; font-weight: 700;
+    padding: 14px 22px; border-radius: 10px; text-decoration: none; cursor: grab; }
+  .bm:active { cursor: grabbing; }
+  ol li { margin-bottom: 8px; line-height: 1.55; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; }
+  .hint { font-size: 13px; color: #71717a; }
+</style>
+</head>
+<body>
+<main>
+  <div class="card">
+    <h1>Live Editor — edit on the page itself</h1>
+    <p>Not a separate tool page. Not a box with the site inside. This works like VisBug and Edit Page: you open your live site, tap the bookmark, and edit that page right there, full screen.</p>
+    <p><a class="bm" href="javascript:(function(){var s=document.createElement('script');s.src='https://dineshmerugu06.github.io/live-editor/editor.js?v=1';document.body.appendChild(s);})();">✏️ Edit This Site</a></p>
+    <p class="hint">Drag the button above into your bookmarks bar. That is the whole install.</p>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">How to use it</h2>
+    <ol>
+      <li>Drag <b>✏️ Edit This Site</b> into your bookmarks bar (desktop Chrome).</li>
+      <li>Open any of your live sites, for example <a href="https://dineshmerugu06.github.io/footwear-v2/">https://dineshmerugu06.github.io/footwear-v2/</a></li>
+      <li>Click the <b>Edit This Site</b> bookmark. A black bar appears at the top of the page.</li>
+      <li>Click any element on the page to select it. Change its text, colour, background, size, drag it to move it, hide it, delete it.</li>
+      <li>Every change goes in the Change Log and saves to GitHub by itself. The live site updates in about 1 minute.</li>
+    </ol>
+    <p class="hint">On your phone there is no bookmarks bar: open the site, open Chrome's bookmarks menu, tap Edit This Site.</p>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">Saving</h2>
+    <p>First time you press Save, it asks for a GitHub token. Make one at <code>https://github.com/settings/tokens</code> — fine-grained, Contents Read and write, only the repo you are editing. It stays in your browser only, never in chat.</p>
+    <p>No token? Press Change Log, then Copy log, and send the log to Muse. He saves it from the backend.</p>
+    <p class="hint">The old version is still here too: <a href="https://dineshmerugu06.github.io/live-editor/">Live Editor v1 (tool page)</a></p>
+  </div>
+</main>
+</body>
+</html>

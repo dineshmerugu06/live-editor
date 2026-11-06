@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Live Editor — edit site, auto-update GitHub</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, sans-serif; margin: 0; background: #f4f4f5; color: #18181b; }
+  header { background: #18181b; color: #fff; padding: 14px 16px; }
+  header h1 { margin: 0; font-size: 20px; }
+  header p { margin: 4px 0 0; color: #d4d4d8; font-size: 13px; }
+  main { padding: 12px; max-width: 1100px; margin: 0 auto; }
+  .card { background: #fff; border: 1px solid #e4e4e7; border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  input[type="text"], input[type="password"] { flex: 1; min-width: 220px; padding: 9px 10px; border: 1px solid #d4d4d8; border-radius: 8px; font-size: 14px; }
+  input[type="number"] { width: 70px; padding: 7px; border: 1px solid #d4d4d8; border-radius: 8px; }
+  button { padding: 9px 13px; border: 0; border-radius: 8px; background: #18181b; color: #fff; font-size: 14px; cursor: pointer; }
+  button.secondary { background: #e4e4e7; color: #18181b; }
+  button.active { background: #ea580c; }
+  button:disabled { opacity: .5; cursor: default; }
+  label { font-size: 13px; }
+  #status { font-size: 14px; padding: 10px 12px; border-radius: 8px; background: #fef9c3; }
+  #status.ok { background: #dcfce7; }
+  #status.err { background: #fee2e2; }
+  #preview { width: 100%; height: 62vh; border: 1px solid #d4d4d8; border-radius: 8px; background: #fff; }
+  #log { list-style: none; margin: 8px 0 0; padding: 0; max-height: 260px; overflow: auto; font-size: 13px; }
+  #log li { border-bottom: 1px solid #f4f4f5; padding: 7px 2px; }
+  #log code { background: #f4f4f5; padding: 1px 4px; border-radius: 4px; }
+  .mono { font-family: ui-monospace, monospace; font-size: 12px; word-break: break-all; }
+  details { font-size: 13px; }
+  details summary { cursor: pointer; font-weight: 600; }
+  .hint { font-size: 12px; color: #71717a; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Live Editor</h1>
+  <p>Edit a GitHub Pages site visually. Every change is written back into the code and saved to GitHub automatically.</p>
+</header>
+
+<main>
+  <div class="card">
+    <details>
+      <summary>How auto-update works — the main logic (read this first)</summary>
+      <p><b>A visual change alone never updates code.</b> The browser page (DOM) is only memory. Refresh and it is gone. That is why VisBug, SitePeel and Edit Page lose changes.</p>
+      <p>Auto-update needs 3 steps, and this tool does all 3:</p>
+      <ol>
+        <li><b>Record the change as data, not pixels.</b> Every edit becomes: <code>file + selector + what changed + old value → new value</code>.<br>
+        Example: <code>index.html, h1.hero-title, color, #000000 → #ff0000</code></li>
+        <li><b>Patch the source file.</b> Find that same element in the real <code>index.html</code> code (by its selector) and change it there — text, or an inline style. The source file is the truth, not the screen.</li>
+        <li><b>Commit the file to GitHub.</b> Send the new file to GitHub with the GitHub Contents API. GitHub Pages then rebuilds (about 1 minute) and the live site shows the change.</li>
+      </ol>
+      <p><b>Example:</b> you change a heading from black to red.<br>
+      Screen: <code>h1</code> turns red.<br>
+      Code: <code>&lt;h1 class="hero-title" style="color: #ff0000;"&gt;</code> is written into <code>index.html</code>.<br>
+      GitHub: <code>index.html</code> is committed to <code>main</code>. Pages rebuilds. Live link updates.</p>
+      <p><b>Move (drag):</b> dragging records a <code>transform: translate(x, y)</code> style on that element, and that style is written into the code the same way.</p>
+      <p><b>v1 limit, stated plainly:</b> style and text changes are saved as inline styles / text inside <code>index.html</code> only. The tool does not yet rewrite a separate <code>style.css</code> file. Inline style wins over the CSS file, so the live page looks right, and the change is in the code.</p>
+    </details>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <input type="text" id="pageUrl" placeholder="Paste GitHub Pages link — https://dineshmerugu06.github.io/mind-kick/">
+      <button id="loadBtn">Load site</button>
+      <button id="demoBtn" class="secondary">Try demo (no GitHub needed)</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <label><input type="checkbox" id="autoSave" checked> Auto-update GitHub on every change</label>
+      <button id="tokenBtn" class="secondary">GitHub token</button>
+      <button id="saveNowBtn" class="secondary">Save now</button>
+      <span id="repoInfo" class="hint">No site loaded yet.</span>
+    </sdiv>
+    <div id="tokenPanel" style="display:none; margin-top:10px">
+      <div class="row">
+        <input type="password" id="tokenInput" placeholder="GitHub token (fine-grained, Contents: Read and write, for this repo only)">
+        <button id="saveTokenBtn">Save token in this browser</button>
+        <button id="clearTokenBtn" class="secondary">Clear token</button>
+      </div>
+      <p class="hint">Token is stored only in this browser (localStorage). It is sent only to api.github.com, never to anyone else. Never paste it in chat. Create one at: https://github.com/settings/tokens — make a fine-grained token, pick only the repo you will edit, give it Contents Read and write. Without a token the tool still works in log-only mode: edits show in the preview and in the Change Log, but nothing is saved to GitHub.</p>
+      <p class="hint" id="tokenStatus"></p>
+    </div>
+    <p id="status">Paste a Pages link and press Load site.</p>
+  </div>
+
+  <div class="card">
+    <div class="row" id="toolbar">
+      <button data-mode="select" class="active">Select</button>
+      <button data-mode="text">Text</button>
+      <button data-mode="move">Move (drag)</button>
+      <span class="hint" id="selectedInfo">Nothing selected. Click an element in the preview.</span>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <label>Text colour <input type="color" id="colorInput" value="#000000"></label>
+      <label>Background <input type="color" id="bgInput" value="#ffffff"></label>
+      <label>Font size <input type="number" id="fontSizeInput" value="16" min="8" max="200"> px</label>
+      <button id="hideBtn" class="secondary">Hide</button>
+      <button id="deleteBtn" class="secondary">Delete</button>
+      <button id="undoBtn" class="secondary">Undo (Ctrl+Z)</button>
+    </div>
+    <iframe id="preview" title="Site preview" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>
+    <p class="hint">Clicking a link inside the preview does nothing — the editor blocks navigation so you can edit. To open the real live site, use the Pages link in a new tab.</p>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <b>Change Log</b>
+      <span class="hint" id="logCount">0 changes</span>
+      <button id="copyLogBtn" class="secondary">Copy log</button>
+      <button id="downloadLogBtn" class="secondary">Download log</button>
+      <button id="downloadHtmlBtn" class="secondary">Download updated HTML</button>
+      <button id="clearLogBtn" class="secondary">Clear log</button>
+    </div>
+    <ul id="log"><li class="hint">No changes yet. Load a site, click an element, change it.</li></ul>
+  </div>
+</main>
+
+<script>
+/*
+ * MAIN LOGIC — how a visual edit becomes a code update:
+ *
+ * 1. state.sourceHtml holds the REAL file text (index.html from GitHub).
+ *    The iframe only shows a copy of it. The file text is the truth.
+ * 2. Every edit creates a Change object:
+ *      { file, selector, type, property, oldValue, newValue, time }
+ *    The selector is a unique CSS path to the element, so the same
+ *    element can be found again inside the source file text.
+ * 3. applyToSource(change) parses state.sourceHtml, finds the element
+ *    by that selector, and changes it in the SOURCE (text or inline
+ *    style), then re-serialises state.sourceHtml.
+ * 4. saveNow() sends state.sourceHtml to GitHub with the Contents API
+ *    (PUT /repos/{owner}/{repo}/contents/{path}, with the file's SHA).
+ *    GitHub Pages rebuilds and the live site updates.
+ * 5. Undo restores the previous sourceHtml snapshot, so undo also
+ *    auto-saves the reverted file to GitHub.
+ * Nothing here only changes pixels. If it is not in state.sourceHtml,
+ * it is not saved. If it is not committed, it is not live.
+ */
+'use strict';
+
+const $ = (id) => document.getElementById(id);
+
+const state = {
+  owner: '', repo: '', path: '', branch: 'main', sha: '',
+  sourceHtml: '', baseHref: '', pageUrl: '',
+  token: localStorage.getItem('liveEditor_token') || '',
+  changes: [], snapshots: [],
+  mode: 'select', selected: null, selectedSelector: '',
+  saveTimer: null, dragging: null,
+};
+
+function setStatus(msg, kind) {
+  const el = $('status');
+  el.textContent = msg;
+  el.className = kind === 'ok' ? 'ok' : kind === 'err' ? 'err' : '';
+}
+function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+/* ---------- base64 that handles UTF-8 ---------- */
+function b64encode(str) {
+  const bytes = new TextEncoder().encode(str);
+  let bin = ''; bytes.forEach((b) => { bin += String.fromCharCode(b); });
+  return btoa(bin);
+}
+function b64decode(b64) {
+  const bin = atob(b64.replace(/\s/g, ''));
+  const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
+/* ---------- 1. Parse a Pages link (or github.com link) ---------- */
+function parsePagesUrl(raw) {
+  const u = new URL(raw.trim());
+  const parts = u.pathname.split('/').filter(Boolean);
+  if (u.hostname.endsWith('github.io')) {
+    const owner = u.hostname.replace('.github.io', '');
+    const repo = parts[0];
+    if (!owner || !repo) throw new Error('That link has no repo. Use https://OWNER.github.io/REPO/');
+    let rest = parts.slice(1).join('/');
+    let path;
+    if (!rest) path = 'index.html';
+    else if (rest.endsWith('/')) path = rest + 'index.html';
+    else if (rest.endsWith('.html')) path = rest;
+    else path = rest + '/index.html';
+    const dir = path.slice(0, path.lastIndexOf('/') + 1);
+    return { owner, repo, path, pageUrl: raw.trim(), baseHref: `https://${owner}.github.io/${repo}/${dir}` };
+  }
+  if (u.hostname === 'github.com') {
+    const owner = parts[0], repo = parts[1];
+    if (!owner || !repo) throw new Error('That link has no repo.');
+    let path = 'index.html';
+    const blobIdx = parts.indexOf('blob');
+    if (blobIdx >= 0 && parts[blobIdx + 2]) path = parts.slice(blobIdx + 2).join('/');
+    return { owner, repo, path, pageUrl: `https://${owner}.github.io/${repo}/`, baseHref: `https://${owner}.github.io/${repo}/` };
+  }
+  throw new Error('Paste a GitHub Pages link (OWNER.github.io/REPO/) or a github.com repo link.');
+}
+
+/* ---------- 2. Load the real file from GitHub ---------- */
+async function fetchFile(owner, repo, path, branch) {
+  const url = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(path).replace(/%2F/g, '/')}?ref=${branch}`;
+  const headers = { 'Accept': 'application/vnd.github+json' };
+  if (state.token) headers['Authorization'] = 'Bearer ' + state.token;
+  const res = await fetch(url, { headers });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`GitHub ${res.status}: ${t.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  if (!data.content) throw new Error('GitHub returned no file content. Is this a file, not a folder?');
+  return { html: b64decode(data.content), sha: data.sha };
+}
+
+async function loadSite() {
+  const raw = $('pageUrl').value.trim();
+  if (!raw) { setStatus('Paste a GitHub Pages link first.', 'err'); return; }
+  try {
+    setStatus('Loading site from GitHub…');
+    const parsed = parsePagesUrl(raw);
+    Object.assign(state, parsed);
+    let file;
+    try {
+      file = await fetchFile(parsed.owner, parsed.repo, parsed.path, 'main');
+      state.branch = 'main';
+    } catch (e) {
+      file = await fetchFile(parsed.owner, parsed.repo, parsed.path, 'master');
+      state.branch = 'master';
+    }
+    state.sourceHtml = file.html;
+    state.sha = file.sha;
+    state.changes = []; state.snapshots = [];
+    renderLog();
+    $('repoInfo').textContent = `${state.owner}/${state.repo} — ${state.path} (${state.branch})`;
+    renderPreview();
+    setStatus(`Loaded ${state.owner}/${state.repo} — ${state.path}. Click an element to edit it.`, 'ok');
+  } catch (e) {
+    setStatus('Load failed: ' + e.message, 'err');
+  }
+}
+
+function loadDemo() {
+  state.owner = 'demo'; state.repo = 'demo'; state.path = 'index.html'; state.branch = 'main'; state.sha = '';
+  state.pageUrl = 'demo'; state.baseHref = '';
+  state.sourceHtml = '<!DOCTYPE html>\n<html><head><meta charset="UTF-8"><title>Demo shop</title><style>body{font-family:system-ui,sans-serif;margin:0;padding:24px} .hero-title{color:#111} .btn{background:#111;color:#fff;padding:10px 16px;border:0;border-radius:8px}</style></head><body><h1 class="hero-title">Demo shop</h1><p class="hero-text">Change my text, colour, or drag me.</p><button class="btn">Buy now</button></body></html>';
+  state.changes = []; state.snapshots = [];
+  renderLog();
+  $('repoInfo').textContent = 'Demo page (no GitHub — edits are logged only, nothing is committed).';
+  renderPreview();
+  setStatus('Demo loaded. Edit it — the Change Log below records every change. Add a token + Load a real site to auto-save to GitHub.', 'ok');
+}
+
+/* ---------- 3. Show the file in the iframe (same-origin, editable) ---------- */
+function renderPreview() {
+  const frame = $('preview');
+  let html = state.sourceHtml;
+  const inject = `<base href="${esc(state.baseHref)}">` +
+    `<style id="liveedit-style">[data-liveedit-hover]{outline:2px dashed #2563eb !important} [data-liveedit-selected]{outline:3px solid #ea580c !important}</style>`;
+  if (html.includes('</head>')) html = html.replace('</head>', inject + '</head>');
+  else html = inject + html;
+  frame.srcdoc = html;
+  frame.onload = () => attachFrame(frame);
+}
+
+function attachFrame(frame) {
+  const doc = frame.contentDocument;
+  if (!doc) return;
+  state.selected = null; state.selectedSelector = '';
+  $('selectedInfo').textContent = 'Nothing selected. Click an element in the preview.';
+  // Block navigation — links must not leave the editor.
+  doc.addEventListener('click', (e) => {
+    if (e.target.closest('a')) e.preventDefault();
+    const el = e.target;
+    if (!el || el === doc.documentElement || el === doc.body) return;
+    if (state.mode === 'text') { startTextEdit(el); return; }
+    selectElement(el);
+    e.preventDefault(); e.stopPropagation();
+  }, true);
+  doc.addEventListener('dblclick', (e) => {
+    const el = e.target;
+    if (el && el !== doc.documentElement && el !== doc.body) { startTextEdit(el); e.preventDefault(); }
+  }, true);
+  doc.addEventListener('mouseover', (e) => {
+    const el = e.target;
+    if (el && el !== doc.documentElement && el !== doc.body) el.setAttribute('data-liveedit-hover', '');
+  }, true);
+  doc.addEventListener('mouseout', (e) => {
+    const el = e.target;
+    if (el) el.removeAttribute('data-liveedit-hover');
+  }, true);
+  // Drag to move (Move mode only).
+  doc.addEventListener('pointerdown', (e) => {
+    if (state.mode !== 'move') return;
+    const el = e.target;
+    if (!el || el === doc.documentElement || el === doc.body) return;
+    selectElement(el);
+    const m = /translate\(\s*(-?[\d.]+)px,\s*(-?[\d.]+)px\)/.exec(el.style.transform || '');
+    state.dragging = { el, startX: e.clientX, startY: e.clientY, baseX: m ? +m[1] : 0, baseY: m ? +m[2] : 0, oldTransform: el.style.transform || '' };
+    e.preventDefault();
+  }, true);
+  doc.addEventListener('pointermove', (e) => {
+    if (!state.dragging) return;
+    const d = state.dragging;
+    const dx = d.baseX + (e.clientX - d.startX), dy = d.baseY + (e.clientY - d.startY);
+    d.el.style.transform = `translate(${Math.round(dx)}px, ${Math.round(dy)}px)`;
+    d.el.style.position = d.el.style.position || 'relative';
+  }, true);
+  doc.addEventListener('pointerup', (e) => {
+    if (!state.dragging) return;
+    const d = state.dragging; state.dragging = null;
+    const newTransform = d.el.style.transform || '';
+    if (newTransform !== d.oldTransform) {
+      recordChange({ type: 'move', property: 'transform', oldValue: d.oldTransform, newValue: newTransform });
+    }
+  }, true);
+}
+
+/* ---------- 4. Select an element + build its unique selector ---------- */
+function buildSelector(el) {
+  if (el.id) return '#' + el.id;
+  const parts = [];
+  let cur = el;
+  while (cur && cur.nodeType === 1 && cur.tagName !== 'BODY' && cur.tagName !== 'HTML') {
+    let part = cur.tagName.toLowerCase();
+    const cls = [...cur.classList].filter((c) => !c.startsWith('liveedit')).join('.');
+    if (cls) part += '.' + cls;
+    let idx = 1, sib = cur.previousElementSibling;
+    while (sib) { if (sib.tagName === cur.tagName) idx++; sib = sib.previousElementSibling; }
+    part += `:nth-of-type(${idx})`;
+    parts.unshift(part);
+    cur = cur.parentElement;
+  }
+  return parts.join(' > ');
+}
+
+function selectElement(el) {
+  const doc = $('preview').contentDocument;
+  doc.querySelectorAll('[data-liveedit-selected]').forEach((n) => n.removeAttribute('data-liveedit-selected'));
+  el.setAttribute('data-liveedit-selected', '');
+  state.selected = el;
+  state.selectedSelector = buildSelector(el);
+  $('selectedInfo').textContent = `Selected: ${el.tagName.toLowerCase()} — ${state.selectedSelector}`;
+  const cs = doc.defaultView.getComputedStyle(el);
+  $('colorInput').value = rgbToHex(cs.color);
+  $('bgInput').value = rgbToHex(cs.backgroundColor);
+  $('fontSizeInput').value = Math.round(parseFloat(cs.fontSize)) || 16;
+}
+function rgbToHex(rgb) {
+  const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(rgb || '');
+  if (!m) return '#000000';
+  return '#' + [1, 2, 3].map((i) => (+m[i]).toString(16).padStart(2, '0')).join('');
+}
+
+/* ---------- 5. Text edit ---------- */
+function startTextEdit(el) {
+  selectElement(el);
+  const oldText = el.textContent;
+  el.contentEditable = 'true';
+  el.focus();
+  const done = () => {
+    el.contentEditable = 'false';
+    el.removeEventListener('blur', done);
+    const newText = el.textContent;
+    if (newText !== oldText) {
+      recordChange({ type: 'text', property: 'text', oldValue: oldText, newValue: newText });
+    }
+  };
+  el.addEventListener('blur', done);
+}
+
+/* ---------- 6. The core: patch the SOURCE file from a Change ---------- */
+function applyToSource(change) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(state.sourceHtml, 'text/html');
+  const el = doc.querySelector(change.selector);
+  if (!el) throw new Error('Could not find this element in the code: ' + change.selector);
+  if (change.type === 'text') {
+    el.textContent = change.newValue;
+  } else if (change.type === 'delete') {
+    el.remove();
+  } else if (change.type === 'hide') {
+    el.style.display = 'none';
+  } else if (change.type === 'style' || change.type === 'move') {
+    el.style.setProperty(change.property, change.newValue);
+    if (change.type === 'move') el.style.position = el.style.position || 'relative';
+  }
+  state.sourceHtml = '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
+}
+
+function recordChange(partial) {
+  if (!state.selectedSelector && partial.type !== 'undo') {
+    setStatus('Select an element in the preview first.', 'err'); return;
+  }
+  // Snapshot BEFORE the change, so Undo can restore the exact old file.
+  state.snapshots.push(state.sourceHtml);
+  if (state.snapshots.length > 50) state.snapshots.shift();
+  const change = {
+    time: new Date().toLocaleTimeString(),
+    file: state.path || 'index.html',
+    selector: state.selectedSelector,
+    ...partial,
+  };
+  try {
+    applyToSource(change);
+  } catch (e) {
+    state.snapshots.pop();
+    setStatus('Change NOT saved to code: ' + e.message, 'err');
+    renderPreview();
+    return;
+  }
+  state.changes.push(change);
+  renderLog();
+  // Do NOT reload the preview here. The change is already visible on
+  // the live element (text / style / move were applied in place before
+  // this call). Reloading srcdoc replayed the whole page — preloader,
+  // scroll reset — on every single change. Hide / Delete are applied
+  // to the live element in place, right below.
+  if (change.type === 'hide' && state.selected) state.selected.style.display = 'none';
+  if (change.type === 'delete' && state.selected) {
+    state.selected.remove();
+    state.selected = null; state.selectedSelector = '';
+    $('selectedInfo').textContent = 'Deleted. Click another element to select it.';
+  }
+  setStatus(`Changed ${change.selector} — ${change.property}: ${String(change.oldValue).slice(0, 40)} → ${String(change.newValue).slice(0, 40)}. Auto-saving…`);
+  scheduleSave();
+}
+
+/* ---------- 7. Commit the file to GitHub (this is the auto-update) ---------- */
+function scheduleSave() {
+  if (!$('autoSave').checked) { setStatus('Auto-update OFF. Change is logged — press Save now to commit it.', ''); return; }
+  clearTimeout(state.saveTimer);
+  state.saveTimer = setTimeout(saveNow, 2000);
+}
+
+async function saveNow() {
+  if (!state.sourceHtml) { setStatus('Load a site first.', 'err'); return; }
+  if (state.owner === 'demo' || !state.sha) {
+    setStatus('Log-only mode: no GitHub file to save. Load a real Pages site (demo has no repo).', 'err');
+    return;
+  }
+  if (!state.token) {
+    setStatus('No token — change is logged, NOT saved to GitHub. Press GitHub token and save a token to auto-save.', 'err');
+    return;
+  }
+  const last = state.changes[state.changes.length - 1];
+  const summary = last ? `${last.type} ${last.selector} ${last.property}` : 'live edit';
+  setStatus('Saving to GitHub…');
+  try {
+    const url = `https://api.github.com/repos/${state.owner}/${state.repo}/contents/${state.path.split('/').map(encodeURIComponent).join('/')}`;
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: { 'Accept': 'application/vnd.github+json', 'Authorization': 'Bearer ' + state.token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: `Live edit: ${summary}`,
+        content: b64encode(state.sourceHtml),
+        sha: state.sha,
+        branch: state.branch,
+      }),
+    });
+    if (!res.ok) {
+      const t = await res.text();
+      throw new Error(`GitHub ${res.status}: ${t.slice(0, 200)}`);
+    }
+    const data = await res.json();
+    state.sha = data.content.sha;
+    state.changes.push({ time: new Date().toLocaleTimeString(), file: state.path, selector: '', type: 'commit', property: 'github', oldValue: '', newValue: 'commit ' + state.sha.slice(0, 7) });
+    renderLog();
+    setStatus(`Saved ✓ ${new Date().toLocaleTimeString()} — commit ${state.sha.slice(0, 7)}. Live site updates in about 1 minute — hard refresh the Pages link.`, 'ok');
+  } catch (e) {
+    setStatus('Save failed: ' + e.message + ' — your change is still in the log. Press Save now to retry.', 'err');
+  }
+}
+
+/* ---------- 8. Undo (restores the old file, then auto-saves that) ---------- */
+function undo() {
+  if (!state.snapshots.length) { setStatus('Nothing to undo.', ''); return; }
+  state.sourceHtml = state.snapshots.pop();
+  state.changes.push({ time: new Date().toLocaleTimeString(), file: state.path, selector: state.selectedSelector, type: 'undo', property: 'revert', oldValue: '', newValue: 'restored previous file version' });
+  renderLog();
+  renderPreview();
+  setStatus('Undone. Auto-saving the reverted file…');
+  scheduleSave();
+}
+
+/* ---------- 9. Change Log ---------- */
+function renderLog() {
+  const ul = $('log');
+  $('logCount').textContent = `${state.changes.length} change${state.changes.length === 1 ? '' : 's'}`;
+  if (!state.changes.length) { ul.innerHTML = '<li class="hint">No changes yet. Load a site, click an element, change it.</li>'; return; }
+  ul.innerHTML = state.changes.map((c) => {
+    if (c.type === 'commit') return `<li>[${esc(c.time)}] <b>Committed to GitHub</b> — ${esc(c.newValue)}</li>`;
+    return `<li>[${esc(c.time)}] <b>${esc(c.type)}</b> <code>${esc(c.selector)}</code> — ${esc(c.property)}: <code>${esc(String(c.oldValue).slice(0, 60))}</code> → <code>${esc(String(c.newValue).slice(0, 60))}</code> <span class="hint">(${esc(c.file)})</span></li>`;
+  }).join('');
+}
+function logText() {
+  return state.changes.map((c) => `[${c.time}] ${c.type} ${c.selector} — ${c.property}: ${c.oldValue} → ${c.newValue} (${c.file})`).join('\n');
+}
+
+/* ---------- 10. Wire up the toolbar ---------- */
+document.querySelectorAll('#toolbar [data-mode]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    state.mode = btn.dataset.mode;
+    document.querySelectorAll('#toolbar [data-mode]').forEach((b) => b.classList.toggle('active', b === btn));
+    setStatus(`Mode: ${state.mode}. ${state.mode === 'text' ? 'Click text to edit it.' : state.mode === 'move' ? 'Drag an element to move it.' : 'Click an element to select it.'}`);
+  });
+});
+$('loadBtn').addEventListener('click', loadSite);
+$('demoBtn').addEventListener('click', loadDemo);
+$('saveNowBtn').addEventListener('click', saveNow);
+$('undoBtn').addEventListener('click', undo);
+$('tokenBtn').addEventListener('click', () => {
+  const p = $('tokenPanel');
+  p.style.display = p.style.display === 'none' ? 'block' : 'none';
+  $('tokenInput').value = state.token;
+  updateTokenStatus();
+});
+$('saveTokenBtn').addEventListener('click', () => {
+  state.token = $('tokenInput').value.trim();
+  if (state.token) localStorage.setItem('liveEditor_token', state.token);
+  else localStorage.removeItem('liveEditor_token');
+  updateTokenStatus();
+  setStatus(state.token ? 'Token saved in this browser only.' : 'Token cleared.', 'ok');
+});
+$('clearTokenBtn').addEventListener('click', () => {
+  state.token = ''; localStorage.removeItem('liveEditor_token');
+  $('tokenInput').value = ''; updateTokenStatus();
+  setStatus('Token cleared.', 'ok');
+});
+function updateTokenStatus() {
+  $('tokenStatus').textContent = state.token ? 'Token saved in this browser. It is sent only to api.github.com.' : 'No token saved. Tool works in log-only mode until you save one.';
+}
+updateTokenStatus();
+
+function applyStyleToSelected(property, value) {
+  if (!state.selected) { setStatus('Select an element first.', 'err'); return; }
+  const oldValue = state.selected.style.getPropertyValue(property) || '';
+  if (oldValue === value) return;
+  state.selected.style.setProperty(property, value);
+  recordChange({ type: 'style', property, oldValue, newValue: value });
+}
+$('colorInput').addEventListener('change', (e) => applyStyleToSelected('color', e.target.value));
+$('bgInput').addEventListener('change', (e) => applyStyleToSelected('background-color', e.target.value));
+$('fontSizeInput').addEventListener('change', (e) => applyStyleToSelected('font-size', e.target.value + 'px'));
+$('hideBtn').addEventListener('click', () => {
+  if (!state.selected) { setStatus('Select an element first.', 'err'); return; }
+  recordChange({ type: 'hide', property: 'display', oldValue: '', newValue: 'none' });
+});
+$('deleteBtn').addEventListener('click', () => {
+  if (!state.selected) { setStatus('Select an element first.', 'err'); return; }
+  recordChange({ type: 'delete', property: 'removed', oldValue: state.selected.outerHTML.slice(0, 60), newValue: '' });
+});
+$('copyLogBtn').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText(logText() || 'No changes yet.'); setStatus('Change log copied.', 'ok'); }
+  catch (e) { setStatus('Copy failed — select the log text manually.', 'err'); }
+});
+function download(filename, text, type) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type: type || 'text/plain' }));
+  a.download = filename; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+$('downloadLogBtn').addEventListener('click', () => download('change-log.txt', logText() || 'No changes yet.'));
+$('downloadHtmlBtn').addEventListener('click', () => {
+  if (!state.sourceHtml) { setStatus('Load a site first.', 'err'); return; }
+  download('updated-' + (state.path.split('/').pop() || 'index.html'), state.sourceHtml, 'text/html');
+});
+$('clearLogBtn').addEventListener('click', () => { state.changes = []; renderLog(); });
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !$('preview').contentDocument?.activeElement?.isContentEditable) {
+    e.preventDefault(); undo();
+  }
+});
+</script>
+</body>
+</html>

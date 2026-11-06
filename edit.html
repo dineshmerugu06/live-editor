@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Live Editor — edit on the page</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #111; }
+  #site { width: 100vw; height: 100vh; border: 0; display: block; background: #fff; }
+  #fallback { position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+    color: #fff; font: 16px system-ui, sans-serif; text-align: center; padding: 20px; line-height: 1.6; }
+  #fallback a { color: #fbbf24; }
+</style>
+</head>
+<body>
+<iframe id="site" title="Site"></iframe>
+<div id="fallback"><div>This site cannot be edited here — it lives on a different website address.<br>
+Use the bookmark on that site instead.<br><br>
+<a href="bookmarklet.html">Get the Edit This Site bookmark</a></div></div>
+<script>
+(function () {
+  var params = new URLSearchParams(location.search);
+  var site = params.get('site') || 'footwear-v2';
+  var url = params.get('url');
+  var target = url || ('https://dineshmerugu06.github.io/' + site + '/');
+  var frame = document.getElementById('site');
+  var EDITOR = 'https://dineshmerugu06.github.io/live-editor/editor.js?v=1';
+
+  function sameHost(u) {
+    try { return new URL(u).hostname === location.hostname; } catch (e) { return false; }
+  }
+  // Inject the editor into the live page. Works because the site is on
+  // the same address (dineshmerugu06.github.io) as this page.
+  function inject() {
+    try {
+      var doc = frame.contentDocument;
+      if (!doc || !doc.body) return;
+      if (doc.getElementById('liveedit-bar')) return; // already on
+      var s = doc.createElement('script');
+      s.src = EDITOR;
+      doc.body.appendChild(s);
+    } catch (e) {
+      document.getElementById('fallback').style.display = 'flex';
+    }
+  }
+  if (!sameHost(target)) {
+    document.getElementById('fallback').style.display = 'flex';
+  } else {
+    frame.addEventListener('load', inject);
+    frame.src = target;
+  }
+})();
+</script>
+</body>
+</html>
